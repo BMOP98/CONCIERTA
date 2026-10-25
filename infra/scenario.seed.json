@@ -1,0 +1,16 @@
+{
+ "scenario":{"id":1,"name":"Escenario CONCIERTA","description":"Recinto principal de conciertos con localidades numeradas y cancha general","location":"Quito, Ecuador","capacity":330},
+ "sections":[
+  {"name":"VIP","description":"Frente al escenario","type":"VIP","capacity":48,"price":75,"rows":4,"seatsPerRow":12},
+  {"name":"PREFERENCIA","description":"Vista preferencial","type":"PREFERENCIA","capacity":72,"price":55,"rows":6,"seatsPerRow":12},
+  {"name":"BUTACAS","description":"Asientos centrales","type":"BUTACAS","capacity":60,"price":45,"rows":5,"seatsPerRow":12},
+  {"name":"GENERAL","description":"Gradería general","type":"GENERAL","capacity":90,"price":30,"rows":6,"seatsPerRow":15},
+  {"name":"CANCHA","description":"Zona de pie sin asientos numerados","type":"CANCHA","capacity":60,"price":25,"rows":null,"seatsPerRow":null}
+ ],
+ "events":[
+  {"name":"Noches de Neón","description":"Festival electrónico con luces y experiencias inmersivas.","artist":"Neon Collective","genre":"Electrónica","date":"2026-11-14T20:00:00-05:00"},
+  {"name":"Ecos del Rock","description":"Los himnos del rock en una noche inolvidable.","artist":"Ecos del Rock Band","genre":"Rock","date":"2026-11-21T19:30:00-05:00"},
+  {"name":"Ritmo Latino","description":"Una noche de ritmos latinos para bailar.","artist":"Ritmo Latino Ensemble","genre":"Latino","date":"2026-12-05T20:30:00-05:00"},
+  {"name":"Sinfonía Bajo las Estrellas","description":"Orquesta y magia en vivo.","artist":"Orquesta Concierta","genre":"Clásica","date":"2026-12-12T19:00:00-05:00"}
+ ]
+}
