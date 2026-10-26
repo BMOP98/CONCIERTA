@@ -39,7 +39,16 @@ if len(SECRET) < 32:
 
 if len(INTERNAL) < 32:
     raise RuntimeError("INTERNAL_SECRET no configurado correctamente")
-URL = f"postgresql+psycopg://{os.getenv('DATABASE_USER','concierta')}:{os.getenv('DATABASE_PASSWORD','concierta_local_change_me')}@{os.getenv('DATABASE_HOST','localhost')}:{os.getenv('DATABASE_PORT','5434')}/concierta_reservations"
+DATABASE_NAME = os.getenv("DATABASE_NAME", "concierta_reservations")
+
+URL = (
+    f"postgresql+psycopg://"
+    f"{os.getenv('DATABASE_USER', 'concierta')}:"
+    f"{os.getenv('DATABASE_PASSWORD')}@"
+    f"{os.getenv('DATABASE_HOST', 'localhost')}:"
+    f"{os.getenv('DATABASE_PORT', '5434')}/"
+    f"{DATABASE_NAME}"
+)
 engine = create_engine(URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(engine)
 
@@ -571,7 +580,7 @@ def confirm(
         user_id=u["sub"],
         resource="RESERVATION",
         resource_id=r.id,
-        details=f"Reserva {r.code} confirmada"
+        details=f"Reserva {r.code} confirmada",
     )
 
     background_tasks.add_task(email_confirmation_job, r.id)
@@ -652,7 +661,7 @@ def cancel(rid: str, u=Depends(user), s: Session = Depends(db)):
         user_id=u["sub"],
         resource="RESERVATION",
         resource_id=r.id,
-        details=f"Reserva {r.code} cancelada"
+        details=f"Reserva {r.code} cancelada",
     )
 
     return asdict(r)
@@ -772,6 +781,7 @@ def report(
             "tickets": 0,
             "revenue": 0,
             "sections": defaultdict(int),
+            "section_revenue": defaultdict(float),
         }
     )
     for r in rows:
@@ -781,7 +791,10 @@ def report(
             a["tickets"] += len(r.tickets)
             a["revenue"] += float(r.total)
             for t in r.tickets:
-                a["sections"][str(t.section_id)] += 1
+                section_id = str(t.section_id)
+
+                a["sections"][section_id] += 1
+                a["section_revenue"][section_id] += float(t.unit_price)
     return {
         "reservation_count": len(rows),
         "confirmed_count": sum(r.status == "CONFIRMED" for r in rows),
@@ -799,6 +812,10 @@ def report(
                 "occupied": v["tickets"],
                 "revenue": round(v["revenue"], 2),
                 "by_section": dict(v["sections"]),
+                "by_section_revenue": {
+                    section_id: round(amount, 2)
+                    for section_id, amount in v["section_revenue"].items()
+                },
             }
             for k, v in totals.items()
         ],

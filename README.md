@@ -1,101 +1,203 @@
-# CONCIERTA — Sistema de Reservas de Conciertos
+# CONCIERTA — Sistema de gestión de reservas de conciertos
 
-Aplicación web académica de arquitectura **microservicios heterogéneos**, con servicios ejecutados **localmente** y Docker **solo para PostgreSQL**. Idioma español, dólares estadounidenses (USD), horario del Ecuador.
+**CONCIERTA** es una aplicación web académica para administrar conciertos y reservar localidades de un escenario, con un frontend en React y tres microservicios independientes. La interfaz está en español, los importes se expresan en dólares estadounidenses (USD) y las fechas se presentan en horario de Ecuador (`America/Guayaquil`). **Los pagos son simulados; el sistema no procesa cargos bancarios ni emite facturas fiscales.**
 
-## Requisitos
+## Funcionalidades
 
-- Node.js 20+ y npm
-- Python 3.11+ y pip
-- Docker y Docker Compose (solo PostgreSQL)
-- Puertos disponibles: 5173 (web), 8001 (auth), 8002 (eventos), 8003 (reservas), 5434 (PostgreSQL)
+- **Clientes:** registro con credenciales temporales enviadas por SMTP; inicio de sesión; cambio obligatorio de contraseña; búsqueda de conciertos; selección de asientos y localidades sin numeración; reserva temporal; confirmación de pago simulado; historial; descarga de comprobante PDF y boletos PDF con QR; cancelación y reintento de correo fallido.
+- **Administradores:** gestión de usuarios y roles; creación, edición, despublicación y republicación de conciertos; reportes con filtros por fechas, evento y estado; consulta de capacidad, ocupación, disponibilidad e ingresos simulados por evento y sección; consulta de reservas y boletos por usuario; validación de entradas mediante QR y prevención de doble uso.
+- **Seguridad:** JWT firmado, roles y permisos verificados en servidor, comprobación del estado actual de las cuentas entre microservicios, invalidación de sesiones mediante `token_version`, contraseñas almacenadas con bcrypt, validación de entradas y auditoría persistente de operaciones relevantes.
 
-## Inicio desde cero
+## Arquitectura
 
-```bash
-# Desde la carpeta raíz del proyecto
-cp .env.example .env       # En Windows: copy .env.example .env
-# IMPORTANTE: para un despliegue real personalizar JWT_SECRET, INTERNAL_SECRET y ADMIN_PASSWORD.
-docker compose up -d postgres
+| Componente | Tecnología | Puerto local | Base de datos |
+|---|---|---:|---|
+| Frontend | React 18 + Vite | 5173 | — |
+| Autenticación | Python + FastAPI + SQLAlchemy | 8001 | `concierta_auth` |
+| Eventos | Node.js + Express + Sequelize | 8002 | `concierta_events` |
+| Reservas | Python + FastAPI + SQLAlchemy | 8003 | `concierta_reservations` |
+| PostgreSQL | Docker / Docker Compose | 5434 (anfitrión) | Tres bases independientes |
 
-cd services/auth
-python -m venv .venv
-# Linux/macOS:
-source .venv/bin/activate
-# Windows PowerShell: .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-cd ../..
+Los servicios de aplicación se ejecutan **localmente**; Docker se utiliza para PostgreSQL. Los servicios se comunican mediante HTTP/REST y utilizan identificadores para relacionar entidades entre bases. No existen claves foráneas entre las tres bases independientes.
 
-cd services/reservations
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-cd ../..
-
-cd services/events; npm install; cd ../..
-cd frontend; npm install; cd ..
+```mermaid
+flowchart LR
+    UI[React / Vite :5173]
+    AUTH[Autenticación / FastAPI :8001]
+    EVENTS[Eventos / Express :8002]
+    BOOK[Reservas / FastAPI :8003]
+    PG[(PostgreSQL / Docker :5434)]
+    SMTP[Servidor SMTP]
+    UI --> AUTH
+    UI --> EVENTS
+    UI --> BOOK
+    EVENTS --> AUTH
+    EVENTS --> BOOK
+    BOOK --> AUTH
+    BOOK --> EVENTS
+    AUTH --> PG
+    EVENTS --> PG
+    BOOK --> PG
+    AUTH --> SMTP
+    BOOK --> SMTP
 ```
 
-Abra **cuatro terminales independientes** desde la carpeta raíz y ejecute:
+El diagrama es conceptual: cada microservicio accede exclusivamente a **su propia base de datos**, aunque las tres residan en la misma instancia PostgreSQL. Los detalles de relaciones y flujos se documentarán en la sección de diagramas técnicos de la fase 6.4.
 
-| Terminal | Comando | URL |
+## Requisitos para Windows
+
+- Windows con PowerShell y Docker Desktop / Docker Compose.
+- **Python 3.10 o superior** compatible con las dependencias del proyecto (las pruebas locales se ejecutaron con Python 3.10.2).
+- Node.js y npm (el servicio de Eventos se comprobó con Node.js 24; conviene usar una versión LTS compatible).
+- Puertos libres: **5173, 8001, 8002, 8003 y 5434**.
+- Una cuenta de correo SMTP configurada para el envío real de credenciales y confirmaciones.
+
+## Instalación inicial en Windows (PowerShell)
+
+Ejecuta los comandos **desde la carpeta raíz `CONCIERTA`**; no copies los prefijos `PS>` ni los símbolos `>>` que muestra PowerShell.
+
+### 1. Configurar las variables de entorno
+
+Si existe el archivo de ejemplo, cópialo antes de editar:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Configura el archivo `.env` de la raíz con tus propios valores. Las variables presentes en esta instalación son:
+
+| Grupo | Variables |
+|---|---|
+| PostgreSQL | `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_USER`, `DATABASE_PASSWORD` |
+| Seguridad | `JWT_SECRET`, `INTERNAL_SECRET` |
+| Comunicación | `AUTH_URL`, `EVENTS_URL`, `RESERVATIONS_URL`, `CORS_ORIGIN` |
+| Reservas | `HOLD_MINUTES` |
+| Administrador inicial | `ADMIN_EMAIL`, `ADMIN_PASSWORD` |
+| Correo | `MAIL_MODE`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_APP_PASSWORD`, `SMTP_FROM` |
+
+`JWT_SECRET` e `INTERNAL_SECRET` deben estar definidos y tener **al menos 32 caracteres**. La contraseña inicial del administrador se toma de `ADMIN_PASSWORD` **durante la creación inicial** de esa cuenta: cambiar el `.env` posteriormente no restablece una contraseña existente.
+
+**Nunca publiques el archivo `.env`, las contraseñas de aplicación SMTP ni los secretos JWT.** Mantén solamente nombres de variables y valores ficticios en la documentación compartida.
+
+### 2. Iniciar PostgreSQL
+
+Con Docker Desktop funcionando:
+
+```powershell
+docker compose up -d postgres
+```
+
+La configuración actual utiliza PostgreSQL por el puerto `5434` del equipo anfitrión. La primera inicialización debe crear las tres bases de datos del sistema mediante la infraestructura del proyecto.
+
+> **Precaución:** no utilices `docker compose down -v` para reiniciar la aplicación: esa opción elimina los volúmenes y puede causar pérdida de datos.
+
+### 3. Instalar dependencias Python
+
+```powershell
+python -m venv .\services\auth\.venv
+.\services\auth\.venv\Scripts\python.exe -m pip install -r .\services\auth\requirements.txt
+
+python -m venv .\services\reservations\.venv
+.\services\reservations\.venv\Scripts\python.exe -m pip install -r .\services\reservations\requirements.txt
+```
+
+### 4. Instalar dependencias Node.js
+
+```powershell
+Push-Location .\services\events
+npm install
+Pop-Location
+
+Push-Location .\frontend
+npm install
+Pop-Location
+```
+
+### 5. Iniciar los cuatro componentes
+
+Abre **cuatro ventanas de PowerShell**, cada una situada en la raíz de CONCIERTA, y ejecuta un script distinto:
+
+| Ventana | Comando | Comprobación |
 |---|---|---|
-| 1 Auth | `cd services/auth && .venv/bin/uvicorn app.main:app --reload --port 8001` | http://localhost:8001/docs |
-| 2 Eventos | `cd services/events && npm run dev` | http://localhost:8002/health |
-| 3 Reservas | `cd services/reservations && .venv/bin/uvicorn app.main:app --reload --port 8003` | http://localhost:8003/docs |
-| 4 Web | `cd frontend && npm run dev` | http://localhost:5173 |
+| 1 | `.\scripts\start-auth.bat` | http://localhost:8001/health |
+| 2 | `.\scripts\start-events.bat` | http://localhost:8002/health |
+| 3 | `.\scripts\start-reservations.bat` | http://localhost:8003/health |
+| 4 | `.\scripts\start-web.bat` | http://localhost:5173 |
 
-**Windows:** use `scripts/start-auth.bat`, `scripts/start-events.bat`, `scripts/start-reservations.bat`, `scripts/start-web.bat` (una terminal por archivo, después de instalar dependencias). **Linux/macOS:** existen los equivalentes `scripts/start-*.sh`.
+Los archivos `.bat` cambian automáticamente a la carpeta del componente y arrancan:
 
-Es importante iniciar primero la base, luego eventos, luego autenticación/reservas, y finalmente web. La primera puesta en marcha crea las tablas automáticamente con ORM y carga datos de referencia con `infra/scenario.seed.json`.
+- `start-auth.bat`: activa `services/auth/.venv` y ejecuta `uvicorn app.main:app --reload --port 8001`.
+- `start-events.bat`: ejecuta `npm run dev` en `services/events`.
+- `start-reservations.bat`: activa `services/reservations/.venv` y ejecuta `uvicorn app.main:app --reload --port 8003`.
+- `start-web.bat`: ejecuta `npm run dev` en `frontend`.
 
-## Usuario administrador de desarrollo
+Se incluyen scripts `.sh` equivalentes para entornos Unix; esta guía describe específicamente el flujo probado en Windows.
 
-Usuario: `admin` / contraseña: `Admin1234!` (valor predeterminado configurable con `.env`). No reutilizar en producción.
+## Estructura principal del repositorio
 
-Para crear cliente: **Regístrate**, completa tus datos (nacionalidad predefinida: Ecuatoriana). Una vez creado, se muestra una confirmación y la página cambia automáticamente al inicio de sesión. El nombre de usuario se genera a partir de nombres y apellidos, comprobando unicidad; las credenciales se entregan únicamente por correo SMTP. Si el correo o documento ya existe, se informa sin duplicar la cuenta. Inicia sesión con las credenciales del correo. Cambio de contraseña a través de `PUT /auth/password` (documentado en Swagger). Para Gmail SMTP, configura `MAIL_MODE=smtp` en el `.env` de la raíz, junto con las variables indicadas abajo. En ese modo, las credenciales se envían por correo y NO se devuelven en la respuesta API.
+```text
+CONCIERTA/
+├── .env                         # Configuración local: no compartir
+├── README.md
+├── frontend/                    # React + Vite
+├── services/
+│   ├── auth/                    # Autenticación y gestión de usuarios/roles
+│   ├── events/                  # Conciertos, escenario y reporte consolidado
+│   └── reservations/            # Reservas, tickets, PDF, QR y correo
+├── infra/
+│   ├── init.sql
+│   ├── scenario.seed.json
+│   └── schema_fallback.sql
+└── scripts/
+    ├── start-auth.bat
+    ├── start-events.bat
+    ├── start-reservations.bat
+    ├── start-web.bat
+    ├── check-pdfs.py
+    └── smoke_test.py
+```
 
-## Flujo de prueba funcional
+Existen scripts `.sh` correspondientes a los cuatro scripts de arranque. Pueden existir migraciones y documentos adicionales dentro del repositorio.
 
-1. Abre `http://localhost:5173` y busca un evento; elige localidades en el mapa y mezcla asientos de VIP, PREFERENCIA, BUTACAS, GENERAL y cantidades de CANCHA, hasta 6 en conjunto.
-2. Crea una cuenta y vuelve a seleccionar las localidades; pulsa **Continuar**.
-3. Confirma el pago **simulado** dentro de 5 minutos; aparece una reserva CONFIRMED y tickets QR.
-4. Ve a **Mis reservas**; abre tus códigos QR, cancela la reserva (se liberan cupos).
-5. Inicia sesión como administrador; administra eventos, roles/usuarios, consulta el escenario y observa métricas.
-6. Para verificar exclusividad, abre dos navegadores con diferentes clientes e intenta reservar el mismo asiento: la segunda petición debe responder **409**. Los bloqueos se serializan transaccionalmente por evento en PostgreSQL.
-7. Para verificar vencimiento, deja un apartado 5 minutos sin confirmar; la próxima consulta o intento de confirmación lo marca EXPIRED y libera cupos. El vencimiento es evaluado mediante PostgreSQL usando `now()` y las consultas de disponibilidad/operaciones; no requiere que el usuario tenga abierta la página.
+## Escenario y localidades
 
-## Endpoints principales
+La configuración actual del escenario utiliza una capacidad total de **330 entradas por concierto**:
 
-- Auth (FastAPI, PostgreSQL `concierta_auth`): `POST /auth/register`, `POST /auth/login`, `POST /auth/token` OAuth2 password grant, `GET /auth/me`, `PUT /auth/password`, `GET /auth/users`, `PATCH /auth/users/{id}`, `GET /auth/roles`.
-- Eventos (Express + Sequelize, PostgreSQL `concierta_events`): `GET /events`, `GET /events/{id}`, `POST /events`, `PUT /events/{id}`, `DELETE /events/{id}` (baja lógica), `GET /scenario`, `GET /sections`, `GET /reports/general`.
-- Reservas (FastAPI, PostgreSQL `concierta_reservations`): `GET /availability/{event_id}`, `POST /reservations`, `POST /reservations/{id}/confirm`, `POST /reservations/{id}/cancel`, `GET /reservations/mine`, `GET /reservations/all`, `GET /tickets/{id}/qr`, `POST /tickets/{id}/validate`.
+| Sección | Capacidad | Organización |
+|---|---:|---|
+| VIP | 48 | 4 filas × 12 asientos |
+| PREFERENCIA | 72 | 6 filas × 12 asientos |
+| BUTACAS | 60 | 5 filas × 12 asientos |
+| GENERAL | 90 | 6 filas × 15 asientos |
+| CANCHA | 60 | Sin asientos numerados |
+| **Total** | **330** | **270 asientos numerados + 60 en cancha** |
 
-Los tres microservicios usan BD distintas, JWT firmado con clave compartida y roles, DTO validados, controles de acceso, sin claves foráneas *entre* bases independientes. Referencias entre dominios son IDs y se validan vía API REST.
+El plano del frontend es una representación interactiva de estas localidades. La carga inicial toma los datos de `infra/scenario.seed.json`, siempre que el escenario todavía no exista.
 
-## Límites operativos y mejoras para producción
+## Flujo funcional de reservas
 
-- Pago estrictamente simulado; sin proveedor bancario ni facturación.
-- Email: `MAIL_MODE=smtp` habilita Gmail SMTP real (puerto 465 + TLS implícito). Las contraseñas temporales se envían por correo, no por la API. Pendiente para producción: verificación independiente de correo, restablecimiento seguro de contraseña y gestión de secretos.
-- El flujo OAuth2 usa **Resource Owner Password Credentials** en el entorno académico. Para aplicaciones públicas se recomienda OIDC con Authorization Code + PKCE y un proveedor de identidad.
-- La expiración es **lógica** y se materializa al consultar disponibilidad, crear/confirmar reservas o consultar reportes. No hay proceso en segundo plano ni cron; la exclusión se calcula correctamente incluso antes de materializar la transición.
-- El código QR se genera en PNG por la API autenticada; en el acceso, el validador debe obtener su payload `CONCIERTA:<ticket_id>:<secret>` y enviar el secreto al endpoint administrativo `POST /tickets/{ticket_id}/validate`.
-- No utilizar secretos de ejemplo en producción; configurar TLS, cookies seguras, rate limiting, auditoría duradera, migraciones versionadas, observabilidad, correo real, refresh token y pruebas de integración/penetración antes de operar comercialmente.
+1. El cliente crea una cuenta y recibe por SMTP su usuario y contraseña temporal.
+2. Inicia sesión y establece una nueva contraseña antes de reservar.
+3. Selecciona un concierto futuro, localidades y asientos, con un máximo de **6 entradas por cliente y evento**.
+4. La reserva se registra inicialmente como `PENDING` y bloquea las localidades durante el plazo configurado (`HOLD_MINUTES`; habitualmente **5 minutos**).
+5. Si el usuario confirma dentro del plazo, el pago **simulado** cambia la reserva a `CONFIRMED`. Si vence, la reserva pasa a `EXPIRED` y deja de ocupar localidades.
+6. Se envía un correo de confirmación con **un comprobante PDF general** y **un PDF individual con QR por boleto**. La confirmación persiste incluso si el correo falla.
+7. Desde **Mis reservas**, el cliente consulta su historial, descarga PDFs y, si el envío falló, solicita un reintento.
+8. Desde **Administración → Validar entradas**, un administrador comprueba el QR. Un ticket validado no debe permitir un segundo ingreso.
 
-## Documentación
+El servicio de Reservas ejecuta una revisión automática de expiración aproximadamente cada 30 segundos y también contempla la caducidad en sus operaciones. La reserva concurrente de asientos se protege mediante bloqueos transaccionales por evento en PostgreSQL.
 
-- `docs/ARQUITECTURA.md`: diagramas Mermaid, decisiones, modelo ER y seguridad.
-- `infra/scenario.seed.json`: escenario, secciones, asientos generados y 4 conciertos precargados.
-- `infra/schema_fallback.sql`: referencia SQL para creación de tablas en fallo de bootstrap ORM.
+## Administración y reportes
 
-## Novedades: plano y selección multizona
+El panel administrativo permite gestionar usuarios, roles y conciertos, incluyendo despublicación lógica de eventos. El reporte consolidado admite filtros por **fecha inicial, fecha final, concierto y estado** de reserva; presenta capacidad, ocupación, disponibilidad según el reporte y recaudación **simulada** por concierto y sección.
 
-La imagen de referencia se traduce a localidades existentes del sistema: **Humbe Box = VIP**, **Output Box = CANCHA**, **Fan = PREFERENCIA**, **Butaca (ambos lados) = BUTACAS**, **VIP exterior = GENERAL**. El plano SVG es interactivo. Las butacas laterales corresponden a una sola sección lógica BUTACAS en la BD (no se modifican los datos semilla ni los IDs).
+**Interpretación:** la disponibilidad calculada en reportes filtrados no necesariamente equivale a la disponibilidad de venta en tiempo real: las reservas pendientes pueden bloquear localidades temporalmente. Para consultar cupos de compra se utiliza el endpoint de disponibilidad del evento.
 
-Puedes agregar entradas en una zona, navegar a otra y seguir seleccionando. El carrito mantiene el detalle por sección y el precio acumulado. La API ya aceptaba varios tipos de `items` en una misma reserva; ahora el frontend también aprovecha esa funcionalidad. El máximo de 6 se aplica al total del evento.
+El administrador también puede consultar reservas, boletos, validaciones y el historial individual de los usuarios.
 
-## Gmail SMTP (Windows y Linux)
+## Correo SMTP y documentos
 
-En la **raíz del proyecto**, crea `.env` desde `.env.example` si aún no existe. Configura allí (nunca en el frontend):
+Para Gmail SMTP mediante SSL implícito, las variables habitualmente son:
 
 ```dotenv
 MAIL_MODE=smtp
@@ -103,45 +205,106 @@ SMTP_HOST=smtp.gmail.com
 SMTP_PORT=465
 SMTP_SECURE=true
 SMTP_USER=TU_CORREO@gmail.com
-SMTP_APP_PASSWORD=TU_CONTRASENA_DE_APLICACION
 SMTP_FROM=TU_CORREO@gmail.com
+SMTP_APP_PASSWORD=TU_CLAVE_DE_APLICACION
 ```
 
-La clave es una **contraseña de aplicación de Gmail**, no la contraseña de inicio de sesión. Reinicia el microservicio de autenticación. En `MAIL_MODE=smtp` el registro envía el nombre de usuario y la contraseña temporal al correo del cliente; si falla el envío, la operación de registro se revierte y la API devuelve un error. El modo consola ya no está permitido para registrar usuarios: sin SMTP funcional el registro falla sin crear la cuenta.
+La clave SMTP debe ser una **contraseña de aplicación** cuando el proveedor así lo requiera. No es la contraseña habitual de inicio de sesión de Gmail.
 
-**Importante:** no envíes credenciales reales ni `.env` al repositorio o al ZIP. Si compartiste una contraseña de aplicación por mensajería, revócala y genera otra antes de utilizar SMTP. `.gitignore` excluye el archivo `.env`.
+- **Registro:** entrega las credenciales temporales por email. Si el envío falla, el registro informa el error y revierte su operación de base de datos.
+- **Confirmación:** envía comprobante general y boletos individuales por email en una tarea de fondo. El campo `email_status` registra `PENDING`, `SENT` o `FAILED`.
+- **Reenvío:** el cliente puede solicitar un nuevo intento de correo de una reserva confirmada que todavía no figure como enviada.
+- **Descargas:** el cliente autenticado y el administrador autorizado pueden descargar los documentos PDF. Los códigos QR contienen una referencia y un secreto que no deben difundirse públicamente.
 
-### Windows PowerShell: iniciar desde la raíz del proyecto
+## API REST
 
-```powershell
-docker compose up -d postgres
-Start-Process cmd -ArgumentList '/k', 'scripts\start-auth.bat'
-Start-Process cmd -ArgumentList '/k', 'scripts\start-events.bat'
-Start-Process cmd -ArgumentList '/k', 'scripts\start-reservations.bat'
-Start-Process cmd -ArgumentList '/k', 'scripts\start-web.bat'
-```
+### Autenticación — `http://localhost:8001`
 
-Instala las dependencias según la sección de inicio la primera vez. Si ya tienes el proyecto ejecutándose, reinicia el frontend y autenticación para aplicar cambios.
+Documentación interactiva: **http://localhost:8001/docs** (OpenAPI de FastAPI).
 
+| Método | Ruta | Uso principal |
+|---|---|---|
+| `POST` | `/auth/register` | Registro de cliente y envío de credenciales |
+| `POST` | `/auth/login` | Inicio de sesión JSON |
+| `POST` | `/auth/token` | Token mediante formulario OAuth2 |
+| `GET` | `/auth/me` | Perfil de la cuenta autenticada |
+| `PUT` | `/auth/password` | Cambio de contraseña y nueva sesión |
+| `GET` | `/auth/users` | Listar usuarios; ADMIN |
+| `POST` | `/auth/users` | Crear usuario; ADMIN |
+| `PATCH` | `/auth/users/{uid}` | Modificar rol o estado; ADMIN |
+| `DELETE` | `/auth/users/{uid}` | Desactivación lógica; ADMIN |
+| `GET` | `/auth/roles` | Consultar roles; ADMIN |
+| `POST` | `/auth/roles` | Crear rol; ADMIN |
+| `PUT` | `/auth/roles/{rid}` | Modificar descripción; ADMIN |
+| `DELETE` | `/auth/roles/{rid}` | Eliminar rol personalizado sin usuarios; ADMIN |
+| `GET` | `/internal/users/{uid}` | Consulta entre servicios con clave interna |
 
-## Actualización: correos de compra, PDFs y primer acceso (octubre 2026)
+### Eventos — `http://localhost:8002`
 
-- Tras confirmar el pago **simulado**, el microservicio de reservas confirma la operación en PostgreSQL y programa el envío de un correo HTML profesional por SMTP SSL Gmail (`MAIL_MODE=smtp`), con un **PDF resumen** y **un PDF individual con QR por entrada** adjuntos.
-- Si el correo falla, **la reserva sigue confirmada**. En *Mis reservas* se pueden descargar nuevamente el resumen y los boletos PDF; cuando `email_status=FAILED`, se ofrece un botón de reintento. El estado de envío se almacena en PostgreSQL.
-- El resumen indica nombre del concierto, artista, fecha, localidades, importes y referencia; los PDFs individuales incluyen sección, asiento y QR único. **No son facturas fiscales**, ya que los pagos siguen siendo simulados.
-- El primer acceso con contraseña temporal fuerza a establecer una nueva contraseña (mínimo 10 caracteres, mayúsculas, minúsculas y números). La contraseña temporal deja de servir al cambiarla. Este requisito también aplica a cuentas creadas antes de esta versión mediante la migración aditiva.
-- El servicio de autenticación migra automáticamente la columna `users.must_change_password` y el servicio de reservas `reservations.email_status`. **No ejecutes `docker compose down -v`** para actualizar.
-- El error `No module named PIL` está corregido con `qrcode[pil]` en `services/reservations/requirements.txt` y el generador de PDFs utiliza `reportlab`.
+| Método | Ruta | Uso principal |
+|---|---|---|
+| `GET` | `/health` | Estado del servicio |
+| `GET` | `/scenario` | Escenario, secciones, filas y asientos |
+| `GET` | `/sections` | Secciones disponibles |
+| `GET` | `/events` | Listar conciertos; admite filtros de búsqueda y fecha |
+| `GET` | `/events/{id}` | Detalle de concierto |
+| `POST` | `/events` | Crear concierto; ADMIN |
+| `PUT` | `/events/{id}` | Editar o republicar concierto; ADMIN |
+| `DELETE` | `/events/{id}` | Despublicar concierto; ADMIN |
+| `GET` | `/reports/general` | Reporte consolidado; ADMIN |
 
-### Instalar las nuevas dependencias (Windows PowerShell)
+El reporte admite `from`, `to`, `event_id` y `status` como parámetros de consulta. El servicio de Eventos consulta internamente el reporte de Reservas para consolidar los resultados.
 
-Desde la carpeta raíz de CONCIERTA, con los servicios detenidos:
+### Reservas — `http://localhost:8003`
 
-```powershell
-.\services\auth\.venv\Scripts\python.exe -m pip install -r services/auth/requirements.txt
-.\services\reservations\.venv\Scripts\python.exe -m pip install -r services/reservations/requirements.txt
-```
+Documentación interactiva: **http://localhost:8003/docs** (OpenAPI de FastAPI).
 
-Configura las variables de Gmail en el `.env` **local** (no subas este archivo al repositorio): `MAIL_MODE`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_APP_PASSWORD`, `SMTP_FROM`. El `.env.example` contiene los nombres y placeholders, no credenciales. Reinicia autenticación, eventos, reservas y frontend después de actualizar. El primer inicio aplica las migraciones aditivas.
+| Método | Ruta | Uso principal |
+|---|---|---|
+| `GET` | `/health` | Estado del servicio |
+| `GET` | `/availability/{event_id}` | Localidades ocupadas y cupos por sección |
+| `POST` | `/reservations` | Crear reserva; cliente autenticado |
+| `POST` | `/reservations/{rid}/confirm` | Confirmar pago simulado |
+| `POST` | `/reservations/{rid}/cancel` | Cancelar y liberar localidades |
+| `GET` | `/reservations/mine` | Historial del cliente |
+| `GET` | `/reservations/all` | Historial global; ADMIN |
+| `POST` | `/reservations/{rid}/resend-email` | Reintentar correo de documentos |
+| `GET` | `/reservations/{rid}/summary.pdf` | Descargar resumen PDF |
+| `GET` | `/tickets/{tid}/ticket.pdf` | Descargar boleto PDF individual |
+| `GET` | `/tickets/{tid}/qr` | Imagen QR de un boleto confirmado |
+| `POST` | `/tickets/{tid}/validate` | Validar QR; ADMIN |
+| `GET` | `/internal/report` | Datos para informe, solo comunicación interna |
 
-El sistema usa tareas en segundo plano de FastAPI para el SMTP de confirmación. Para un despliegue empresarial, cambia estas tareas por una cola persistente/outbox y añade reintentos con backoff, observabilidad y control de acceso en el borde. No se incluye un procesador de pagos real.
+Los endpoints protegidos usan `Authorization: Bearer <JWT>`. **No incluyas tokens reales en capturas ni ejemplos públicos.** Los endpoints internos utilizan `x-internal-key`, y no deben exponerse públicamente.
+
+La validación de ticket recibe un cuerpo JSON con `qr_secret` y el ID del boleto en la ruta. El QR contiene la cadena `CONCIERTA:<ticket_id>:<qr_secret>`; para un segundo uso del mismo boleto el servidor devuelve un conflicto HTTP `409`.
+
+## Seguridad y DevSecOps
+
+Los mecanismos implementados incluyen:
+
+- Hash de contraseñas mediante bcrypt y cambio obligatorio después del primer acceso.
+- JWT firmados con HS256, expiración y versión de sesión (`token_version`). Los servicios verifican además el estado y rol actuales del usuario en Autenticación.
+- Autorización de acciones administrativas, protección de endpoints internos con clave compartida y validación de datos con Pydantic o Zod.
+- Limitación básica de intentos de inicio de sesión **en memoria y por IP** en Autenticación; no sustituye una protección distribuida en producción.
+- Bloqueo de reservas concurrentes mediante PostgreSQL, límites de cantidad, vencimiento de reservas y prevención de doble validación de tickets.
+- Auditoría persistente en los tres microservicios. Su escritura es de mejor esfuerzo y debe reforzarse con transacciones/outbox en un entorno de producción que requiera garantías estrictas.
+
+Durante la fase de calidad se ejecutaron y aprobaron **38 pruebas automatizadas**: 16 de Autenticación, 7 de Reservas, 7 de Eventos y 8 de integración básica. Posteriormente se indicó que ciertos cambios y archivos de pruebas fueron revertidos: por ello esta cifra constituye **evidencia histórica de ejecución, no una afirmación de que la suite siga presente en el repositorio actual**. Las pruebas completas de seguridad, rendimiento y despliegue quedan fuera de estas comprobaciones.
+
+## Límites del proyecto y recomendaciones para producción
+
+CONCIERTA se desarrolla con fines académicos. Antes de un despliegue público deben evaluarse HTTPS/TLS extremo a extremo, almacenamiento seguro de secretos, copias de seguridad, políticas de retención de datos, migraciones controladas, gestión de sesiones, revisión de dependencias, monitoreo y alertas, protección distribuida contra fuerza bruta, pruebas de carga, una cola persistente para correos y un proveedor de identidad adecuado. El sistema **no procesa pagos reales**.
+
+## Solución de problemas habituales
+
+- **No se conecta a PostgreSQL:** comprueba Docker Desktop, `docker compose ps` y las variables `DATABASE_*`.
+- **No carga el escenario:** verifica que Eventos esté iniciado y que la semilla se haya aplicado solo en la inicialización correspondiente.
+- **No permite reservar:** confirma que Auth, Eventos y Reservas respondan; revisa si el evento es futuro, si la cuenta está activa, si cambió su contraseña temporal y si quedan cupos.
+- **No llega el correo:** comprueba configuración SMTP y bandeja de spam; en reservas confirmadas consulta `email_status` y utiliza el reenvío cuando corresponda.
+- **Puerto ocupado:** cierra la instancia anterior antes de volver a iniciar el script correspondiente.
+- **Caracteres extraños en PowerShell:** lee los archivos con `Get-Content -Encoding UTF8 .\README.md` y utiliza un editor configurado en UTF-8.
+
+---
+
+**CONCIERTA — Proyecto académico de gestión de conciertos y reservas con microservicios, PostgreSQL y pagos simulados.**

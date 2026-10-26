@@ -574,7 +574,7 @@ app.post(
             action: 'EVENT_CREATED',
             userId: req.user.sub,
             resourceId: event.id,
-            details: `Concierto creado: $DIL0`
+            details: `Concierto creado: ${event.name}`
         });
 
         res.status(201).json(event);
@@ -604,7 +604,7 @@ app.put(
             action: 'EVENT_UPDATED',
             userId: req.user.sub,
             resourceId: e.id,
-            details: `Concierto modificado: $DIL1`
+            details: `Concierto modificado: ${e.name}`
         });
 
         res.json(e);
@@ -639,7 +639,7 @@ app.delete(
                 action: 'EVENT_UNPUBLISHED',
                 userId: req.user.sub,
                 resourceId: e.id,
-                details: `Concierto despublicado: $DIL2`
+                details: `Concierto despublicado: ${e.name}`
             });
         }
 
@@ -660,9 +660,16 @@ app.get(
     wrap(async (req, res) => {
         const params = new URLSearchParams();
 
-        for (const k of ['from', 'to', 'event_id', 'status']) {
-            if (req.query[k]) {
-                params.set(k, req.query[k]);
+        const filterMapping = {
+            from: 'from_date',
+            to: 'to_date',
+            event_id: 'event_id',
+            status: 'status'
+        };
+
+        for (const [requestKey, reportKey] of Object.entries(filterMapping)) {
+            if (req.query[requestKey]) {
+                params.set(reportKey, req.query[requestKey]);
             }
         }
 
@@ -693,6 +700,8 @@ app.get(
                 name: sec.name,
                 capacity: sec.capacity,
                 occupied: row.by_section[String(sec.id)] || 0,
+                revenue:
+                    row.by_section_revenue?.[String(sec.id)] || 0,
                 available:
                     sec.capacity -
                     (row.by_section[String(sec.id)] || 0)

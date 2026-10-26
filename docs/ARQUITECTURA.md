@@ -1,25 +1,38 @@
-# Arquitectura y decisiones de CONCIERTA
+# Arquitectura y decisiones técnicas de CONCIERTA
 
-## Componentes (microservicios heterogéneos)
+> Proyecto académico de reservas de conciertos. Esta documentación describe la arquitectura implementada. Los diagramas ampliados están en [`DIAGRAMAS.md`](DIAGRAMAS.md) y las instrucciones de ejecución en el [`README.md`](../README.md).
+
+## 1. Componentes y comunicación
+
+CONCIERTA emplea **microservicios heterogéneos**, con aplicaciones ejecutadas localmente y **PostgreSQL en Docker**. La interfaz se presenta en español, utiliza dólares estadounidenses (USD) y muestra fechas para Ecuador.
 
 ```mermaid
 flowchart TD
-    W["React / Vite :5173"] -->|REST + JWT| A["Auth FastAPI :8001"]
-    W -->|REST + JWT| E["Eventos Express :8002"]
-    W -->|REST + JWT| R["Reservas FastAPI :8003"]
-    R -->|"REST /events y /scenario"| E
-    E -->|"REST /internal/report con clave interna"| R
-    R -->|"REST /internal/users con clave interna"| A
-    A --> DA[(PostgreSQL auth)]
-    E --> DE[(PostgreSQL events)]
-    R --> DR[(PostgreSQL reservations)]
+    W["Frontend React / Vite :5173"] -->|"REST + JWT"| A["Autenticación FastAPI :8001"]
+    W -->|"REST + JWT"| E["Eventos Express / Sequelize :8002"]
+    W -->|"REST + JWT"| R["Reservas FastAPI :8003"]
+    R -->|"Consulta eventos y escenario"| E
+    R -->|"Verifica cuenta y obtiene correo; clave interna"| A
+    E -->|"Verifica cuenta; clave interna"| A
+    E -->|"Solicita reporte; clave interna"| R
+    A --> DA[("PostgreSQL: concierta_auth")]
+    E --> DE[("PostgreSQL: concierta_events")]
+    R --> DR[("PostgreSQL: concierta_reservations")]
+    A --> SMTP["Servidor SMTP"]
+    R --> SMTP
 ```
 
-Cada base de datos está aislada lógicamente y los servicios se ejecutan como procesos locales independientes. Docker se utiliza únicamente para el motor PostgreSQL. El escenario físico es único, de solo consulta y precargado al iniciar. Cada evento se asocia con ese escenario.
+No existe un gateway desplegado. El navegador accede directamente a las tres API. Cada servicio administra su propia base de datos; **no existen claves foráneas físicas entre bases**. Los servicios intercambian identificadores y comprueban la información de otros dominios mediante HTTP.
 
-## Modelo entidad-relación por dominios
+| Componente | Tecnología | Puerto | Persistencia |
+|---|---|---:|---|
+| Frontend | React y Vite | 5173 | Estado temporal en el navegador |
+| Autenticación | Python, FastAPI y SQLAlchemy | 8001 | `concierta_auth` |
+| Eventos | Node.js, Express y Sequelize | 8002 | `concierta_events` |
+| Reservas | Python, FastAPI y SQLAlchemy | 8003 | `concierta_reservations` |
+| PostgreSQL | Contenedor Docker | 5434 (host) | Tres bases de datos independientes |
 
-> **Nota:** las relaciones entre entidades de microservicios distintos son **lógicas**, no claves foráneas físicas entre bases de datos. En particular, `RESERVATION.client_id`, `RESERVATION.event_id`, `TICKET.section_id` y `TICKET.seat_id` se verifican mediante las APIs correspondientes.
+## 2. Modelo de información por dominios
 
 ```mermaid
 erDiagram
@@ -27,21 +40,18 @@ erDiagram
     SCENARIO ||--o{ SECTION : contiene
     SECTION ||--o{ ROW : contiene
     ROW ||--o{ SEAT : contiene
+    SECTION ||--o{ SEAT : relacion_adicional
     SCENARIO ||--o{ EVENT : programa
-    USER ||--o{ RESERVATION : realiza_logicamente
-    EVENT ||--o{ RESERVATION : recibe_logicamente
     RESERVATION ||--|{ TICKET : genera
-    SECTION ||--o{ TICKET : localidad_logica
-    SEAT o|--o{ TICKET : asiento_logico
 
     ROLE {
         string id PK
         string description
     }
-
     USER {
         string id PK
         string first_name
+        string second_name
         string last_name
         string dni UK
         string email UK
@@ -50,14 +60,14 @@ erDiagram
         string role_id FK
         boolean active
         boolean must_change_password
+        datetime password_changed_at
+        int token_version
     }
-
     SCENARIO {
         int id PK
         string name
         int capacity
     }
-
     SECTION {
         int id PK
         int scenarioId FK
@@ -68,14 +78,12 @@ erDiagram
         int rows
         int seatsPerRow
     }
-
     ROW {
         int id PK
         int sectionId FK
         string label
         int position
     }
-
     SEAT {
         int id PK
         int sectionId FK
@@ -84,7 +92,6 @@ erDiagram
         int number
         string label
     }
-
     EVENT {
         uuid id PK
         int scenarioId FK
@@ -92,7 +99,6 @@ erDiagram
         datetime date
         boolean active
     }
-
     RESERVATION {
         string id PK
         string code UK
@@ -105,7 +111,6 @@ erDiagram
         decimal total
         string email_status
     }
-
     TICKET {
         string id PK
         string reservation_id FK
@@ -119,42 +124,116 @@ erDiagram
     }
 ```
 
-### Relaciones y reglas del escenario
+Las relaciones `User → Reservation`, `Event → Reservation`, `Section → Ticket` y `Seat → Ticket` son **referencias lógicas entre microservicios**. En Reservas, `Ticket.reservation_id` sí es una clave foránea física local hacia `Reservation.id`.
 
-El modelo físico en la base de eventos es **Escenario → Sección → Fila → Asiento**. La tabla `Rows` identifica cada fila mediante `id`, `sectionId`, `label` y `position`; `Seats.rowId` es una clave foránea local hacia `Rows.id`. Se mantienen `Seats.sectionId` y `Seats.rowLabel` por compatibilidad con la API y la interfaz existentes.
+Cada servicio mantiene además su propia tabla de auditoría, independiente de las tablas de negocio. Los registros incluyen la acción, el actor, el recurso, el resultado y la fecha.
 
-El escenario precargado contiene cinco secciones: VIP (48 asientos en 4 filas), PREFERENCIA (72 en 6 filas), BUTACAS (60 en 5 filas), GENERAL (90 en 6 filas) y CANCHA (60 localidades de pie sin filas ni asientos numerados). En total son **330 localidades**: 270 asientos numerados y 60 localidades de CANCHA.
+### Escenario y localidades
 
-`TICKET.reservation_id` sí tiene clave foránea local hacia `RESERVATION.id`. Los demás identificadores de otros dominios no tienen claves foráneas entre bases. El servicio de reservas valida el evento y las localidades mediante REST. Un cliente corresponde a un usuario con rol `CLIENTE`, sin duplicar sus datos personales en otra tabla.
+El escenario precargado contiene **330 localidades**, distribuidas así:
 
-## Consistencia del inventario y las reservas
+| Sección | Filas | Asientos por fila | Capacidad | Numerada |
+|---|---:|---:|---:|---|
+| VIP | 4 | 12 | 48 | Sí |
+| PREFERENCIA | 6 | 12 | 72 | Sí |
+| BUTACAS | 5 | 12 | 60 | Sí |
+| GENERAL | 6 | 15 | 90 | Sí |
+| CANCHA | — | — | 60 | No |
+| **Total** | **21** | — | **330** | **270 asientos numerados** |
 
-El servicio considera ocupados los asientos confirmados y las reservas pendientes **que aún no han expirado**. Cada creación adquiere un bloqueo transaccional de PostgreSQL (`pg_advisory_xact_lock(hashtext(event_id))`), consulta de nuevo la disponibilidad dentro de la transacción y valida los cupos, los asientos ocupados, los asientos repetidos y el máximo de seis entradas por cliente y evento.
+La jerarquía física de Eventos es `Scenario → Section → Row → Seat`, con la relación adicional `Section → Seat` por compatibilidad. El endpoint `/scenario` expone tanto `Sections[].Seats` como `Sections[].Rows[].Seats`. La propiedad `rows` (cantidad numérica de filas) y la asociación `Rows` (colección de filas) se distinguen por mayúsculas; PowerShell 5.1 puede producir conflictos al convertir ambos nombres JSON sin distinguir mayúsculas y minúsculas.
 
-La confirmación y cancelación actualizan el estado de la reserva. Las pendientes vencidas no bloquean disponibilidad; su cambio de estado a `EXPIRED` se ejecuta actualmente al efectuar determinadas operaciones del servicio. **La expiración periódica autónoma queda pendiente para la etapa 2.** Los tickets se conservan para permitir la trazabilidad de las reservas canceladas. En CANCHA, sin asientos numerados, se controla una capacidad agregada y se emite un ticket por unidad.
+CANCHA controla el aforo por cantidad, sin asiento físico numerado. Cada unidad reservada genera un ticket individual.
 
-## Seguridad: CID, AAA y Shift Left
+## 3. Reservas y consistencia de inventario
 
-- **Confidencialidad:** hash de contraseñas con bcrypt, JWT firmado, secretos en `.env` y permisos basados en roles. Las credenciales y los archivos `.env` no deben incorporarse al repositorio.
-- **Integridad:** claves foráneas y unicidad locales, ORM, validaciones Pydantic/Zod, bloqueo transaccional y control contra reutilización del QR.
-- **Disponibilidad:** endpoints `/health`, comprobación de PostgreSQL, `pool_pre_ping` en el servicio de reservas y tratamiento de fallos del servicio de eventos con respuestas `503`.
-- **AAA:** autenticación basada en JWT y flujo OAuth2 Password local; autorización por roles `ADMIN` y `CLIENTE`; trazabilidad básica mediante marcas de tiempo y estados. **La auditoría persistente y completa de accesos y operaciones sigue pendiente.**
-- **DevSecOps / Shift Left:** mantener secretos fuera del código, revisar dependencias (`npm audit`, `pip-audit`), análisis estático, integración continua y pruebas de concurrencia. **La automatización integral de estos controles aún está pendiente.**
+1. El cliente consulta conciertos, localidades y disponibilidad.
+2. Reservas comprueba que el evento esté activo y sea futuro; también comprueba la sección y los asientos con Eventos.
+3. En la creación se adquiere un bloqueo transaccional de PostgreSQL por evento: `pg_advisory_xact_lock(hashtext(event_id))`.
+4. Dentro de la transacción se verifica la disponibilidad actual, la ausencia de duplicados, el aforo por sección y el máximo de **seis entradas por cliente y evento**.
+5. La reserva nace como `PENDING` y bloquea las localidades durante **cinco minutos** por defecto (`HOLD_MINUTES`).
+6. Una confirmación a tiempo la cambia a `CONFIRMED`; la cancelación cambia su estado a `CANCELLED`. Los tickets se conservan para trazabilidad.
+7. Las reservas pendientes vencidas dejan de ocupar localidades. Además de la evaluación de vencimiento en las operaciones, **existe un proceso automático en segundo plano que revisa las expiraciones aproximadamente cada 30 segundos**.
 
-## API, interfaz y documentos
+Los estados de reserva son `PENDING`, `CONFIRMED`, `CANCELLED` y `EXPIRED`. La base de datos protege las operaciones concurrentes; el frontend no constituye la autoridad final sobre disponibilidad.
 
-El navegador React consume directamente las tres APIs REST, sin un gateway desplegado. Esta estructura facilita el desarrollo local; para producción se recomienda un reverse proxy o gateway apropiado.
+## 4. Autenticación, autorización y auditoría
 
-El pago es una transición de estado **simulada**, sin integración bancaria. El sistema incorpora integración SMTP para enviar credenciales y confirmaciones de reservas, con comprobante PDF general y boletos PDF individuales con QR. La entrega efectiva de correos depende de la configuración SMTP y debe verificarse con pruebas reales.
+### Autenticación
 
-La API de escenarios conserva `Sections[].Seats` para compatibilidad con el frontend y el servicio de reservas, y añade `Sections[].Rows[].Seats` para representar la estructura jerárquica. La propiedad `rows` (número de filas) y la asociación `Rows` (colección de filas) se diferencian por mayúsculas; determinados clientes que ignoran el caso, como Windows PowerShell 5.1, requieren tratamiento especial al convertir la respuesta JSON.
+- Contraseñas protegidas con **bcrypt**; se distribuyen credenciales temporales a través de SMTP.
+- El primer acceso exige cambiar la contraseña temporal. La nueva contraseña requiere al menos 10 caracteres, mayúsculas, minúsculas y números.
+- Los JWT están firmados con **HS256**, tienen expiración y contienen `token_version`.
+- El cambio de contraseña incrementa `token_version`; los servicios cotejan la versión del token contra el estado actual del usuario en Autenticación.
+- Las cuentas inactivas o pendientes de cambio obligatorio no pueden utilizar las operaciones protegidas.
+- Un limitador básico por dirección IP reduce intentos repetidos de inicio de sesión; en la configuración local mantiene los contadores en memoria.
 
-## Ejecución local y persistencia
+### Autorización
 
-- **Frontend:** React/Vite, puerto `5173`.
-- **Autenticación:** FastAPI, puerto `8001`, base `concierta_auth`.
-- **Eventos:** Express/Sequelize, puerto `8002`, base `concierta_events`.
-- **Reservas:** FastAPI/SQLAlchemy, puerto `8003`, base `concierta_reservations`.
-- **Persistencia:** PostgreSQL en Docker; los tres servicios se ejecutan localmente en Windows.
+- La base de Autenticación administra los roles; los permisos de las rutas administrativas se verifican con el rol actual del usuario.
+- Eventos y Reservas consultan `/internal/users/{uid}` mediante `INTERNAL_SECRET` para comprobar el estado real de la cuenta. No confían únicamente en el rol declarado por el JWT.
+- Las rutas públicas y administrativas están separadas y los datos personales completos no se incluyen en la respuesta reducida de inicio de sesión.
 
-La definición de infraestructura, las migraciones y el SQL de respaldo se mantienen en `infra/`. Los cambios de tablas existentes se aplican con migraciones; no es necesario reinicializar ni borrar el volumen de PostgreSQL.
+### Auditoría
+
+Los tres microservicios registran acciones importantes en sus respectivas tablas de auditoría:
+
+- **Autenticación:** intentos de inicio de sesión, cambios de contraseña, operaciones de usuarios y roles.
+- **Eventos:** creación, modificación y despublicación de conciertos.
+- **Reservas:** creación, confirmación y cancelación de reservas, y validaciones exitosas de tickets.
+
+Las auditorías se escriben después de la operación principal y sus errores se registran en el servicio; por ello, **no constituyen todavía una garantía de escritura atómica con la operación de negocio**.
+
+## 5. CID, AAA y DevSecOps
+
+| Principio | Medidas implementadas |
+|---|---|
+| **Confidencialidad** | Hash bcrypt; JWT; secretos de entorno; autorización por rol; respuestas de inicio de sesión reducidas |
+| **Integridad** | Validación Pydantic/Zod; unicidad y claves foráneas locales; transacciones y bloqueo por evento; validación QR de un solo uso |
+| **Disponibilidad** | Endpoints `/health`; comprobaciones de conexión; liberación automática de reservas expiradas; errores controlados cuando fallan dependencias |
+| **Autenticación** | Credenciales individuales, JWT firmado y cambio obligatorio de contraseña |
+| **Autorización** | Roles actuales, comprobación interservicios e invalidación de sesiones |
+| **Auditoría** | Tablas persistentes y registro de operaciones relevantes en cada microservicio |
+
+**Enfoque Shift Left:** se han aplicado validaciones y controles de seguridad desde el desarrollo. Durante la fase de calidad se ejecutaron **38 pruebas automatizadas con resultado satisfactorio** (16 de Autenticación, 7 de Eventos, 7 de Reservas y 8 de integración). Posteriormente se revirtieron algunos cambios del entorno de pruebas; **esa cifra corresponde al resultado histórico, no a una suite que se afirme disponible actualmente**.
+
+La automatización permanente de CI, las auditorías periódicas de dependencias y un despliegue de producción endurecido no están acreditados como completados. No deben presentarse como implantados.
+
+## 6. Correos, documentos y control de acceso
+
+- **Registro:** Autenticación envía credenciales temporales mediante SMTP real. No devuelve contraseñas en la respuesta de registro.
+- **Confirmación:** Reservas envía un correo con **un comprobante general PDF** y **un PDF individual por boleto**, con QR único.
+- **Fallo de envío:** la reserva confirmada permanece válida; `email_status` permite identificar fallos y solicitar reenvío desde el área del cliente.
+- **Descargas:** la aplicación permite obtener los documentos de las reservas confirmadas según la autorización correspondiente.
+- **Validación de acceso:** el payload QR tiene el formato `CONCIERTA:<ticket_id>:<qr_secret>`. Solo el administrador puede invocar `POST /tickets/{ticket_id}/validate`; la segunda validación del mismo boleto se rechaza.
+
+El frontend dispone de una pestaña administrativa **Validar entradas**, con lectura mediante cámara en navegadores compatibles y entrada de datos de QR como alternativa.
+
+Los cobros son **simulados**. Los documentos emitidos son comprobantes y boletos, no facturas tributarias.
+
+## 7. Administración y reportes
+
+El administrador puede gestionar usuarios, roles y eventos, consultar el historial individual de reservas y tickets, y filtrar informes por fecha, evento y estado. Los informes muestran capacidad, ocupación y recaudación simulada por concierto y sección.
+
+**Distinción de métricas:** la disponibilidad calculada en un informe filtrado a partir de reservas confirmadas no equivale necesariamente a la disponibilidad de compra en tiempo real; las reservas `PENDING` vigentes también bloquean localidades.
+
+## 8. Ejecución local y documentación
+
+| Servicio | Inicio en Windows (desde la raíz) | Documentación / salud |
+|---|---|---|
+| Autenticación | `./scripts/start-auth.bat` | `http://localhost:8001/docs` |
+| Eventos | `./scripts/start-events.bat` | `http://localhost:8002/health` |
+| Reservas | `./scripts/start-reservations.bat` | `http://localhost:8003/docs` |
+| Frontend | `./scripts/start-web.bat` | `http://localhost:5173` |
+
+La infraestructura y los datos semilla se mantienen en `infra/`. Los cambios del esquema existente deben conservar los datos; **no ejecutar `docker compose down -v`** para reiniciar o actualizar la aplicación.
+
+Consulta también:
+
+- [`../README.md`](../README.md): requisitos, instalación y operación.
+- [`DIAGRAMAS.md`](DIAGRAMAS.md): diagramas ampliados de arquitectura, entidades y procesos.
+- Swagger/OpenAPI de Autenticación y Reservas en los puertos indicados; Eventos documenta sus rutas Express en la documentación del proyecto.
+
+## 9. Límites y recomendaciones para producción
+
+CONCIERTA es una plataforma académica local. Para operar comercialmente se necesitarían, entre otros controles: HTTPS/TLS y gestión centralizada de secretos; migraciones formalizadas; limitación de peticiones compartida entre instancias; monitorización y alertas; gestión robusta de trabajos SMTP mediante cola persistente; endurecimiento de despliegue y copias de seguridad; revisión sistemática de dependencias; y pruebas de penetración e integración continuas.

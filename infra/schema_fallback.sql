@@ -10,8 +10,33 @@ CREATE TABLE IF NOT EXISTS users (
  role_id VARCHAR NOT NULL REFERENCES roles(id), active BOOLEAN NOT NULL DEFAULT TRUE,
  last_login TIMESTAMPTZ,
  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
- must_change_password BOOLEAN NOT NULL DEFAULT TRUE
+ must_change_password BOOLEAN NOT NULL DEFAULT TRUE,
+ password_changed_at TIMESTAMPTZ,
+ token_version INTEGER NOT NULL DEFAULT 0
 );
+
+-- Migraciones aditivas para instalaciones existentes de Autenticación
+ALTER TABLE users
+ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ;
+
+ALTER TABLE users
+ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0;
+
+-- Auditoría de Autenticación
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id VARCHAR PRIMARY KEY,
+    user_id VARCHAR,
+    action VARCHAR(100) NOT NULL,
+    resource VARCHAR(100),
+    resource_id VARCHAR,
+    status VARCHAR(20) NOT NULL,
+    details VARCHAR(1000),
+    created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_audit_logs_user_id
+ON audit_logs(user_id);
+
 -- Conectarse a concierta_events para el siguiente bloque:
 \connect concierta_events
 CREATE TABLE IF NOT EXISTS "Scenarios" ("id" INTEGER PRIMARY KEY,"name" VARCHAR(255) NOT NULL,"description" TEXT,"location" VARCHAR(255),"capacity" INTEGER);
@@ -44,6 +69,20 @@ ON "Rows" ("sectionId");
 CREATE INDEX IF NOT EXISTS "idx_seats_row"
 ON "Seats" ("rowId");
 CREATE TABLE IF NOT EXISTS "Events" ("id" UUID PRIMARY KEY,"scenarioId" INTEGER NOT NULL REFERENCES "Scenarios"("id"),"name" VARCHAR(255) NOT NULL,"description" TEXT NOT NULL,"artist" VARCHAR(255) NOT NULL,"genre" VARCHAR(255) NOT NULL,"date" TIMESTAMPTZ NOT NULL,"imageUrl" VARCHAR(255),"active" BOOLEAN DEFAULT TRUE,"createdAt" TIMESTAMPTZ NOT NULL DEFAULT now(),"updatedAt" TIMESTAMPTZ NOT NULL DEFAULT now());
+
+-- Auditoría del microservicio de Eventos
+CREATE TABLE IF NOT EXISTS "AuditLogs" (
+    "id" UUID PRIMARY KEY,
+    "userId" VARCHAR(255) NOT NULL,
+    "action" VARCHAR(100) NOT NULL,
+    "resource" VARCHAR(100) NOT NULL,
+    "resourceId" VARCHAR(255),
+    "status" VARCHAR(20) NOT NULL,
+    "details" VARCHAR(1000),
+    "createdAt" TIMESTAMPTZ NOT NULL,
+    "updatedAt" TIMESTAMPTZ
+);
+
 -- Conectarse a concierta_reservations para el siguiente bloque:
 \connect concierta_reservations
 CREATE TABLE IF NOT EXISTS reservations (
@@ -65,3 +104,17 @@ CREATE TABLE IF NOT EXISTS tickets (
 CREATE INDEX IF NOT EXISTS ix_tickets_event_id ON tickets(event_id);
 CREATE INDEX IF NOT EXISTS ix_tickets_reservation_id ON tickets(reservation_id);
 CREATE INDEX IF NOT EXISTS idx_ticket_event_seat ON tickets(event_id,seat_id);
+-- Auditoría del microservicio de Reservas
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id VARCHAR PRIMARY KEY,
+    user_id VARCHAR,
+    action VARCHAR(100) NOT NULL,
+    resource VARCHAR(100),
+    resource_id VARCHAR,
+    status VARCHAR(20) NOT NULL,
+    details VARCHAR(1000),
+    created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_audit_logs_user_id
+ON audit_logs(user_id);
