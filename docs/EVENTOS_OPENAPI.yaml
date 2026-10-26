@@ -1,0 +1,381 @@
+openapi: 3.0.3
+info:
+  title: CONCIERTA - API de Eventos
+  version: 1.0.0
+  description: |
+    Contrato OpenAPI del microservicio Eventos (Express y Sequelize).
+    Basado en las rutas y validaciones del archivo services/events/src/server.js.
+    Las rutas administrativas requieren JWT Bearer con rol ADMIN y una cuenta activa.
+    No documenta endpoints de otros microservicios.
+servers:
+  - url: http://localhost:8002
+    description: Desarrollo local
+tags:
+  - name: Sistema
+  - name: Escenario
+  - name: Eventos
+  - name: Reportes
+paths:
+  /health:
+    get:
+      tags: [Sistema]
+      summary: Comprobar el estado HTTP del servicio
+      operationId: healthEventos
+      responses:
+        '200':
+          description: Servicio HTTP disponible (no garantiza acceso a PostgreSQL)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, service]
+                properties:
+                  status: {type: string, example: ok}
+                  service: {type: string, example: events}
+  /scenario:
+    get:
+      tags: [Escenario]
+      summary: Consultar el escenario y su distribución física
+      description: Retorna una lista de escenarios con secciones, filas y asientos. La estructura está precargada y solo es consultable.
+      operationId: obtenerEscenario
+      responses:
+        '200':
+          description: Escenarios con las asociaciones de Sequelize
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/ScenarioDetalle'}
+        '500': {$ref: '#/components/responses/ErrorInterno'}
+  /sections:
+    get:
+      tags: [Escenario]
+      summary: Listar secciones del escenario
+      operationId: listarSecciones
+      responses:
+        '200':
+          description: Secciones ordenadas por ID ascendente
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Section'}
+        '500': {$ref: '#/components/responses/ErrorInterno'}
+  /events:
+    get:
+      tags: [Eventos]
+      summary: Listar eventos y filtrar por texto y fecha
+      description: Por defecto solo incluye eventos activos. El parámetro include_inactive=true también devuelve inactivos; esta ruta es pública.
+      operationId: listarEventos
+      parameters:
+        - name: q
+          in: query
+          description: Texto parcial buscado en nombre o artista (sin distinguir mayúsculas).
+          schema: {type: string}
+        - name: from
+          in: query
+          description: Fecha/hora mínima del evento, interpretada por JavaScript Date.
+          schema: {type: string, format: date-time}
+        - name: to
+          in: query
+          description: Fecha/hora máxima del evento, interpretada por JavaScript Date.
+          schema: {type: string, format: date-time}
+        - name: include_inactive
+          in: query
+          description: Solo el valor textual `true` incluye inactivos.
+          schema: {type: boolean, default: false}
+      responses:
+        '200':
+          description: Eventos ordenados por fecha ascendente
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Event'}
+        '500': {$ref: '#/components/responses/ErrorInterno'}
+    post:
+      tags: [Eventos]
+      summary: Crear un concierto
+      operationId: crearEvento
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EventInput'}
+            example:
+              name: Festival de Primavera
+              description: Un concierto especial en el escenario principal.
+              artist: Banda Ejemplo
+              genre: Pop
+              date: '2026-12-20T20:00:00-05:00'
+              imageUrl: null
+              active: true
+      responses:
+        '201':
+          description: Evento creado
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Event'}
+        '401': {$ref: '#/components/responses/NoAutorizado'}
+        '403': {$ref: '#/components/responses/Prohibido'}
+        '422': {$ref: '#/components/responses/Validacion'}
+        '503': {$ref: '#/components/responses/ServicioNoDisponible'}
+        '500': {$ref: '#/components/responses/ErrorInterno'}
+  /events/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Identificador UUID del evento.
+        schema: {type: string, format: uuid}
+    get:
+      tags: [Eventos]
+      summary: Consultar un concierto por ID
+      description: Puede recuperar un evento inactivo si conoce su ID.
+      operationId: obtenerEvento
+      responses:
+        '200':
+          description: Evento encontrado
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Event'}
+        '404': {$ref: '#/components/responses/NoEncontrado'}
+        '500': {$ref: '#/components/responses/ErrorInterno'}
+    put:
+      tags: [Eventos]
+      summary: Actualizar un concierto
+      description: Requiere el objeto de evento validado completo, no es una actualización parcial. El escenario se fija internamente a ID 1.
+      operationId: actualizarEvento
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EventInput'}
+      responses:
+        '200':
+          description: Evento actualizado
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Event'}
+        '401': {$ref: '#/components/responses/NoAutorizado'}
+        '403': {$ref: '#/components/responses/Prohibido'}
+        '404': {$ref: '#/components/responses/NoEncontrado'}
+        '422': {$ref: '#/components/responses/Validacion'}
+        '503': {$ref: '#/components/responses/ServicioNoDisponible'}
+        '500': {$ref: '#/components/responses/ErrorInterno'}
+    delete:
+      tags: [Eventos]
+      summary: Despublicar concierto (baja lógica)
+      description: No borra físicamente el evento. Establece active=false y conserva su histórico.
+      operationId: despublicarEvento
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Evento despublicado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string, example: 'Evento despublicado; histórico conservado'}
+        '401': {$ref: '#/components/responses/NoAutorizado'}
+        '403': {$ref: '#/components/responses/Prohibido'}
+        '404': {$ref: '#/components/responses/NoEncontrado'}
+        '503': {$ref: '#/components/responses/ServicioNoDisponible'}
+        '500': {$ref: '#/components/responses/ErrorInterno'}
+  /reports/general:
+    get:
+      tags: [Reportes]
+      summary: Reporte consolidado de reservas para administración
+      description: Eventos consulta internamente a Reservas y agrega capacidad, ocupación, disponibilidad y recaudación por sección.
+      operationId: reporteGeneral
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: from
+          in: query
+          description: Inicio del rango de fechas; se transmite a Reservas como from_date.
+          schema: {type: string, format: date}
+        - name: to
+          in: query
+          description: Fin del rango de fechas; se transmite a Reservas como to_date.
+          schema: {type: string, format: date}
+        - name: event_id
+          in: query
+          schema: {type: string, format: uuid}
+        - name: status
+          in: query
+          description: Estado de reserva utilizado para filtrar el reporte.
+          schema: {type: string, example: CONFIRMED}
+      responses:
+        '200':
+          description: Reporte general con ocupación, disponibilidad y recaudación
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/GeneralReport'}
+        '401': {$ref: '#/components/responses/NoAutorizado'}
+        '403': {$ref: '#/components/responses/Prohibido'}
+        '503': {$ref: '#/components/responses/ServicioNoDisponible'}
+        '500': {$ref: '#/components/responses/ErrorInterno'}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT emitido por Auth (:8001), con rol ADMIN vigente y token_version actual.
+  schemas:
+    EventInput:
+      type: object
+      additionalProperties: false
+      required: [name, description, artist, genre, date]
+      properties:
+        name: {type: string, minLength: 3, maxLength: 150}
+        description: {type: string, minLength: 5, maxLength: 3000}
+        artist: {type: string, minLength: 2, maxLength: 120}
+        genre: {type: string, minLength: 2, maxLength: 60}
+        date: {type: string, format: date-time, description: 'ISO 8601 con offset horario obligatorio'}
+        imageUrl: {type: string, format: uri, nullable: true}
+        active: {type: boolean, default: true}
+    Event:
+      type: object
+      required: [id, scenarioId, name, description, artist, genre, date]
+      properties:
+        id: {type: string, format: uuid}
+        scenarioId: {type: integer, example: 1}
+        name: {type: string}
+        description: {type: string}
+        artist: {type: string}
+        genre: {type: string}
+        date: {type: string, format: date-time}
+        imageUrl: {type: string, nullable: true}
+        active: {type: boolean}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+    Seat:
+      type: object
+      properties:
+        id: {type: integer}
+        sectionId: {type: integer}
+        rowId: {type: integer}
+        rowLabel: {type: string, nullable: true}
+        number: {type: integer}
+        label: {type: string, nullable: true}
+    Row:
+      type: object
+      properties:
+        id: {type: integer}
+        sectionId: {type: integer}
+        label: {type: string}
+        position: {type: integer}
+        Seats:
+          type: array
+          items: {$ref: '#/components/schemas/Seat'}
+    Section:
+      type: object
+      properties:
+        id: {type: integer}
+        scenarioId: {type: integer}
+        name: {type: string}
+        description: {type: string, nullable: true}
+        type: {type: string, example: VIP}
+        capacity: {type: integer}
+        price: {type: string, description: 'DECIMAL serializado por Sequelize como cadena', example: '75.00'}
+        rows: {type: integer, nullable: true}
+        seatsPerRow: {type: integer, nullable: true}
+        Seats:
+          type: array
+          items: {$ref: '#/components/schemas/Seat'}
+        Rows:
+          type: array
+          items: {$ref: '#/components/schemas/Row'}
+    ScenarioDetalle:
+      type: object
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        description: {type: string, nullable: true}
+        location: {type: string, nullable: true}
+        capacity: {type: integer}
+        Sections:
+          type: array
+          items: {$ref: '#/components/schemas/Section'}
+    GeneralReport:
+      type: object
+      description: El reporte base procede del servicio Reservas y se enriquece con secciones del servicio Eventos.
+      properties:
+        reservation_count: {type: integer}
+        confirmed_count: {type: integer}
+        total_revenue: {type: number, format: double}
+        by_status:
+          type: object
+          additionalProperties: {type: integer}
+        by_event:
+          type: array
+          items:
+            type: object
+            properties:
+              event_id: {type: string}
+              reservations: {type: integer}
+              occupied: {type: integer}
+              revenue: {type: number}
+              by_section:
+                type: object
+                additionalProperties: {type: integer}
+              by_section_revenue:
+                type: object
+                additionalProperties: {type: number}
+              capacity: {type: integer}
+              available: {type: integer}
+              sections:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    section_id: {type: integer}
+                    name: {type: string}
+                    capacity: {type: integer}
+                    occupied: {type: integer}
+                    revenue: {type: number}
+                    available: {type: integer}
+    Error:
+      type: object
+      properties:
+        detail:
+          description: Mensaje de error o lista de incidencias Zod
+          oneOf:
+            - type: string
+            - type: array
+              items: {type: object}
+  responses:
+    NoAutorizado:
+      description: Token ausente, inválido, expirado o revocado
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Prohibido:
+      description: Rol no permitido o cambio de contraseña obligatorio
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    NoEncontrado:
+      description: No se encontró el evento solicitado
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Validacion:
+      description: Error de validación de datos de entrada con Zod
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    ServicioNoDisponible:
+      description: Fallo al consultar el microservicio Auth para validar el token
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    ErrorInterno:
+      description: Error interno o fallo al consultar el reporte de Reservas
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}

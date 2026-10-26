@@ -42,7 +42,7 @@ flowchart LR
     BOOK --> SMTP
 ```
 
-El diagrama es conceptual: cada microservicio accede exclusivamente a **su propia base de datos**, aunque las tres residan en la misma instancia PostgreSQL. Los detalles de relaciones y flujos se documentarán en la sección de diagramas técnicos de la fase 6.4.
+El diagrama es conceptual: cada microservicio accede exclusivamente a **su propia base de datos**, aunque las tres residan en la misma instancia PostgreSQL. Los detalles de relaciones y flujos se documentan en [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md) y [`docs/DIAGRAMAS.md`](docs/DIAGRAMAS.md).
 
 ## Requisitos para Windows
 
@@ -77,8 +77,6 @@ Configura el archivo `.env` de la raíz con tus propios valores. Las variables p
 
 `JWT_SECRET` e `INTERNAL_SECRET` deben estar definidos y tener **al menos 32 caracteres**. La contraseña inicial del administrador se toma de `ADMIN_PASSWORD` **durante la creación inicial** de esa cuenta: cambiar el `.env` posteriormente no restablece una contraseña existente.
 
-**Nunca publiques el archivo `.env`, las contraseñas de aplicación SMTP ni los secretos JWT.** Mantén solamente nombres de variables y valores ficticios en la documentación compartida.
-
 ### 2. Iniciar PostgreSQL
 
 Con Docker Desktop funcionando:
@@ -88,8 +86,6 @@ docker compose up -d postgres
 ```
 
 La configuración actual utiliza PostgreSQL por el puerto `5434` del equipo anfitrión. La primera inicialización debe crear las tres bases de datos del sistema mediante la infraestructura del proyecto.
-
-> **Precaución:** no utilices `docker compose down -v` para reiniciar la aplicación: esa opción elimina los volúmenes y puede causar pérdida de datos.
 
 ### 3. Instalar dependencias Python
 
@@ -135,19 +131,63 @@ Se incluyen scripts `.sh` equivalentes para entornos Unix; esta guía describe e
 
 ## Estructura principal del repositorio
 
+Tras la refactorización modular, los cuatro componentes mantienen sus tecnologías, puertos y contratos REST. El código se organiza por responsabilidades, para separar las rutas HTTP de la seguridad, las validaciones, el acceso a datos y la lógica de negocio.
+
 ```text
 CONCIERTA/
-├── .env                         # Configuración local: no compartir
+├── .env.example                 # Plantilla pública; no publicar .env
+├── docker-compose.yml
 ├── README.md
-├── frontend/                    # React + Vite
+├── frontend/
+│   └── src/
+│       ├── main.jsx            # Punto de entrada React
+│       ├── App.jsx             # Estado y navegación
+│       ├── lib/api.js          # Clientes de las API
+│       ├── components/         # Mapa de localidades y componentes QR
+│       └── pages/              # Pantallas de cliente y administración
 ├── services/
-│   ├── auth/                    # Autenticación y gestión de usuarios/roles
-│   ├── events/                  # Conciertos, escenario y reporte consolidado
-│   └── reservations/            # Reservas, tickets, PDF, QR y correo
+│   ├── auth/
+│   │   ├── app/main.py         # FastAPI, ciclo de vida y routers
+│   │   └── app/
+│   │       ├── api/            # Rutas de acceso, usuarios, roles e internas
+│   │       ├── core/           # Configuración y seguridad
+│   │       ├── db/             # Conexión e inicialización
+│   │       ├── models/         # Entidades SQLAlchemy
+│   │       ├── schemas/        # DTO y validaciones Pydantic
+│   │       └── services/       # Usuarios, sesiones, correo y auditoría
+│   ├── events/
+│   │   └── src/
+│   │       ├── server.js       # Punto de arranque Express
+│   │       ├── app.js          # Aplicación y configuración de rutas
+│   │       ├── config/         # Variables de entorno
+│   │       ├── db/             # Conexión Sequelize
+│   │       ├── models/         # Modelos y relaciones
+│   │       ├── routes/         # Escenario, eventos y reportes
+│   │       ├── middleware/     # Autorización, errores y solicitudes
+│   │       ├── services/       # Auditoría y carga de semilla
+│   │       └── validation.js   # Validación de eventos
+│   └── reservations/
+│       ├── app/main.py         # FastAPI y ciclo de vida
+│       ├── app/documents.py    # Generación de documentos y correo
+│       └── app/
+│           ├── api/            # Disponibilidad, reservas, tickets y reportes
+│           ├── core/           # Configuración y seguridad
+│           ├── db/             # Persistencia y conexión
+│           ├── models/         # Entidades SQLAlchemy
+│           ├── schemas/        # DTO y validaciones Pydantic
+│           └── services/       # Expiración, notificaciones y utilidades
 ├── infra/
 │   ├── init.sql
-│   ├── scenario.seed.json
-│   └── schema_fallback.sql
+│   ├── schema_fallback.sql
+│   ├── datos_ejemplo.sql       # Inserciones alternativas; no ejecutar sobre datos cargados
+│   └── scenario.seed.json      # Semilla operativa de Eventos
+├── docs/
+│   ├── ARQUITECTURA.md
+│   ├── DIAGRAMAS.md
+│   ├── CONCIERTA_GUIA_WINDOWS.md
+│   ├── CONCIERTA_API_REST.md
+│   ├── CONCIERTA_CALIDAD_DEVSECOPS.md
+│   └── OPENAPI_EVENTOS.yaml
 └── scripts/
     ├── start-auth.bat
     ├── start-events.bat
@@ -157,7 +197,9 @@ CONCIERTA/
     └── smoke_test.py
 ```
 
-Existen scripts `.sh` correspondientes a los cuatro scripts de arranque. Pueden existir migraciones y documentos adicionales dentro del repositorio.
+El árbol resume las carpetas y archivos principales; omite archivos auxiliares, dependencias instaladas y los scripts `.sh` equivalentes. Los puntos de entrada de los microservicios se conservan, por lo que los cuatro scripts `.bat` siguen utilizándose sin cambios. Auth y Reservas usan el ciclo de vida `lifespan` de FastAPI para ejecutar sus tareas de inicialización; Reservas inicia y detiene además el proceso de vencimiento automático.
+
+**Nota sobre SQL:** `scenario.seed.json` sigue siendo la fuente utilizada por Eventos para cargar el escenario. `datos_ejemplo.sql` es una alternativa documental de inserción y no debe ejecutarse sobre una base que ya contiene esos registros.
 
 ## Escenario y localidades
 
@@ -278,6 +320,15 @@ Documentación interactiva: **http://localhost:8003/docs** (OpenAPI de FastAPI).
 Los endpoints protegidos usan `Authorization: Bearer <JWT>`. **No incluyas tokens reales en capturas ni ejemplos públicos.** Los endpoints internos utilizan `x-internal-key`, y no deben exponerse públicamente.
 
 La validación de ticket recibe un cuerpo JSON con `qr_secret` y el ID del boleto en la ruta. El QR contiene la cadena `CONCIERTA:<ticket_id>:<qr_secret>`; para un segundo uso del mismo boleto el servidor devuelve un conflicto HTTP `409`.
+
+## Referencias de documentación
+
+- [Arquitectura y organización interna](docs/ARQUITECTURA.md).
+- [Diagramas técnicos](docs/DIAGRAMAS.md).
+- [Guía de instalación en Windows](docs/CONCIERTA_GUIA_WINDOWS.md).
+- [Catálogo de API REST](docs/CONCIERTA_API_REST.md).
+- [OpenAPI 3 de Eventos](docs/OPENAPI_EVENTOS.yaml).
+- [Calidad y DevSecOps](docs/CONCIERTA_CALIDAD_DEVSECOPS.md).
 
 ## Seguridad y DevSecOps
 

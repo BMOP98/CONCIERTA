@@ -217,7 +217,56 @@ El administrador puede gestionar usuarios, roles y eventos, consultar el histori
 
 **Distinción de métricas:** la disponibilidad calculada en un informe filtrado a partir de reservas confirmadas no equivale necesariamente a la disponibilidad de compra en tiempo real; las reservas `PENDING` vigentes también bloquean localidades.
 
-## 8. Ejecución local y documentación
+## 8. Organización modular del código (refactorización)
+
+La refactorización reorganizó archivos y dependencias internas sin cambiar intencionalmente la arquitectura distribuida, los puertos ni las rutas HTTP. Las responsabilidades funcionales de cada microservicio siguen siendo independientes; dentro de cada uno se separan transporte HTTP, validación, persistencia, seguridad y lógica de negocio.
+
+### Autenticación (`services/auth/app/`)
+
+| Módulo | Responsabilidad |
+|---|---|
+| `main.py` | Crear FastAPI, instalar middleware, registrar routers y definir el ciclo `lifespan`. |
+| `api/auth.py`, `api/users.py`, `api/roles.py`, `api/internal.py` | Exponer endpoints según el dominio y el tipo de acceso. |
+| `schemas/auth.py` | Definir DTO y validaciones Pydantic. |
+| `models/entities.py` y `db/` | Gestionar entidades SQLAlchemy, conexión e inicialización. |
+| `core/config.py` y `core/security.py` | Centralizar configuración, JWT, contraseñas y autorización. |
+| `services/` | Separar operaciones de usuario, sesiones, SMTP y auditoría. |
+
+### Eventos (`services/events/src/`)
+
+| Módulo | Responsabilidad |
+|---|---|
+| `server.js` y `app.js` | Iniciar el servidor Express y componer la aplicación. |
+| `routes/` | Agrupar rutas del escenario, conciertos y reportes. |
+| `models/`, `db/` | Definir modelos Sequelize, asociaciones y conexión PostgreSQL. |
+| `middleware/` | Validar autenticación, manejar errores y tareas HTTP comunes. |
+| `services/seed.js`, `services/audit.js` | Cargar datos iniciales y registrar auditorías. |
+| `validation.js`, `config/env.js` | Validar datos de eventos y resolver configuración. |
+
+### Reservas (`services/reservations/app/`)
+
+| Módulo | Responsabilidad |
+|---|---|
+| `main.py` | Crear FastAPI, registrar routers y gestionar inicialización y cierre con `lifespan`. |
+| `api/` | Separar disponibilidad, reservas, documentos, boletos, salud y reportes. |
+| `models/`, `schemas/`, `db/` | Mantener entidades, DTO y conexión SQLAlchemy. |
+| `core/` | Configuración y controles de seguridad. |
+| `services/expiration.py` | Mantener el proceso de revisión periódica de reservas pendientes vencidas. |
+| `services/notifications.py`, `documents.py` | Coordinar notificaciones SMTP y documentos PDF/QR. |
+
+La reorganización **no sustituye** los bloqueos transaccionales, las restricciones de negocio ni las verificaciones de autorización descritas en las secciones anteriores. Evita interpretar que la existencia de carpetas `services/` o `models/` implica que los microservicios comparten una base de datos o un modelo ORM.
+
+### Frontend (`frontend/src/`)
+
+- `main.jsx` inicia React; `App.jsx` coordina navegación, autenticación y estado compartido.
+- `lib/api.js` centraliza las llamadas HTTP a los tres microservicios.
+- `pages/` separa las pantallas de registro, catálogo, detalle, pago simulado, reservas y administración.
+- `components/` reúne el plano de localidades y los componentes de lectura y presentación de QR.
+- `styles.css` conserva los estilos visuales.
+
+**Compatibilidad:** los scripts de inicio siguen apuntando a `app.main:app` en Python y a `npm run dev` en Node/Vite. Tras la refactorización se informó el arranque satisfactorio de los cuatro componentes y una comprobación funcional general en Windows; eso no equivale a certificar una instalación limpia ni una nueva campaña completa de pruebas.
+
+## 9. Ejecución local y documentación
 
 | Servicio | Inicio en Windows (desde la raíz) | Documentación / salud |
 |---|---|---|
@@ -226,14 +275,17 @@ El administrador puede gestionar usuarios, roles y eventos, consultar el histori
 | Reservas | `./scripts/start-reservations.bat` | `http://localhost:8003/docs` |
 | Frontend | `./scripts/start-web.bat` | `http://localhost:5173` |
 
-La infraestructura y los datos semilla se mantienen en `infra/`. Los cambios del esquema existente deben conservar los datos; **no ejecutar `docker compose down -v`** para reiniciar o actualizar la aplicación.
+La infraestructura y los datos semilla se mantienen en `infra/`: `init.sql`, `schema_fallback.sql`, `datos_ejemplo.sql` y `scenario.seed.json`. El archivo `datos_ejemplo.sql` es una alternativa de inserción y no forma parte de la carga automática.  Los cambios del esquema existente deben conservar los datos; **no ejecutar `docker compose down -v`** para reiniciar o actualizar la aplicación.
 
 Consulta también:
 
 - [`../README.md`](../README.md): requisitos, instalación y operación.
 - [`DIAGRAMAS.md`](DIAGRAMAS.md): diagramas ampliados de arquitectura, entidades y procesos.
-- Swagger/OpenAPI de Autenticación y Reservas en los puertos indicados; Eventos documenta sus rutas Express en la documentación del proyecto.
+- Swagger/OpenAPI de Autenticación y Reservas en los puertos indicados; Eventos cuenta con [`OPENAPI_EVENTOS.yaml`](OPENAPI_EVENTOS.yaml).
+- [`CONCIERTA_API_REST.md`](CONCIERTA_API_REST.md): catálogo de endpoints y permisos.
+- [`CONCIERTA_GUIA_WINDOWS.md`](CONCIERTA_GUIA_WINDOWS.md): instalación y ejecución desde cero en Windows.
+- [`CONCIERTA_CALIDAD_DEVSECOPS.md`](CONCIERTA_CALIDAD_DEVSECOPS.md): controles y evidencias de calidad.
 
-## 9. Límites y recomendaciones para producción
+## 10. Límites y recomendaciones para producción
 
 CONCIERTA es una plataforma académica local. Para operar comercialmente se necesitarían, entre otros controles: HTTPS/TLS y gestión centralizada de secretos; migraciones formalizadas; limitación de peticiones compartida entre instancias; monitorización y alertas; gestión robusta de trabajos SMTP mediante cola persistente; endurecimiento de despliegue y copias de seguridad; revisión sistemática de dependencias; y pruebas de penetración e integración continuas.
