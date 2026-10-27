@@ -28,7 +28,7 @@ export default function CheckoutPage({ ctx }) {
                     })}
                 </div>
                 <div className="summary-total">
-                    <span>Importe simulado</span>
+                    <span>Importe</span>
                     <strong>
                         {money(reservation.total)}
                     </strong>
@@ -37,10 +37,9 @@ export default function CheckoutPage({ ctx }) {
                     <ShieldCheck />
                     <div>
                         <strong>Simulación de pago</strong>
-                        <p>No se recogen datos bancarios ni se cobra dinero real. La confirmación registra la reserva en PostgreSQL y habilita tus QR.</p>
                     </div>
                 </div>
-                <button disabled={busy || new Date(reservation.expires_at).getTime() <= now} className="primary full" onClick={confirm}>Simular pago aprobado y confirmar <CheckCircle2 /></button>
+                <button disabled={busy || new Date(reservation.expires_at).getTime() <= now} className="primary full" onClick={confirm}>Pagar y confirmar <CheckCircle2 /></button>
                 <button className="secondary full" onClick={() => withBusy(async () => { await api(BOOK, '/reservations/' + reservation.id + '/cancel', { method: 'POST', token }); go('home'); })}>Cancelar reserva</button>
             </div>
         </main>}

@@ -125,11 +125,6 @@ def summary_pdf(r, event, sections):
     c.drawRightString(545, y - 31, currency(r.total))
     c.setFont("Helvetica", 9)
     c.setFillColor(GRAY)
-    c.drawString(
-        45,
-        max(65, y - 64),
-        "Pago simulado para uso académico: no constituye factura ni comprobante fiscal.",
-    )
     c.save()
     return b.getvalue()
 
@@ -150,14 +145,14 @@ def send_confirmation(email, name, r, event, sections):
         for t in r.tickets
     )
     msg.set_content(
-        f'Hola {name},\n\nTu reserva {r.code} está CONFIRMADA.\nEvento: {event.get("name")}\nFecha: {event_date(event.get("date",""))}\nEntradas: {len(r.tickets)}\n{detail}\nTotal simulado: {currency(r.total)}\n\nAdjuntamos un resumen de la reserva y un boleto PDF con QR por cada entrada. No compartas los códigos QR.\n\nCONCIERTA'
+        f'Hola {name},\n\nTu reserva {r.code} está CONFIRMADA.\nEvento: {event.get("name")}\nFecha: {event_date(event.get("date",""))}\nEntradas: {len(r.tickets)}\n{detail}\nTotal: {currency(r.total)}\n\nAdjuntamos un resumen de la reserva y un boleto PDF con QR por cada entrada. No compartas los códigos QR.\n\nCONCIERTA'
     )
     rows = "".join(
         f'<tr><td style="padding:10px;border-bottom:1px solid #e7deec">{escape(sections.get(t.section_id,{}).get("name","Localidad"))}</td><td style="padding:10px;border-bottom:1px solid #e7deec">{escape(t.seat_label)}</td><td style="padding:10px;border-bottom:1px solid #e7deec;text-align:right">{currency(t.unit_price)}</td></tr>'
         for t in r.tickets
     )
     msg.add_alternative(
-        f"""<html><body style="background:#f2ecf7;margin:0;padding:35px;font-family:Arial,sans-serif"><table role="presentation" style="max-width:630px;margin:auto;background:white;border-radius:16px;overflow:hidden"><tr><td style="background:#221333;color:white;padding:34px;font-size:28px;font-weight:bold">CONCIERTA <span style="color:#fa80c5">●</span></td></tr><tr><td style="padding:36px"><p style="font-size:12px;color:#9636ae;font-weight:bold">RESERVA CONFIRMADA</p><h1 style="font-size:27px;color:#281839">¡Nos vemos en el concierto!</h1><p style="color:#655874">Hola {escape(name)}, tus {len(r.tickets)} entradas están confirmadas. En este correo encontrarás tus documentos PDF y un código QR individual para cada acceso.</p><div style="padding:18px;background:#f5eff9;border-radius:9px;color:#362346"><b>{escape(event.get('name','Concierto'))}</b><br>{escape(event.get('artist',''))}<br>{escape(event_date(event.get('date','')))}<br>Reserva: {escape(r.code)}</div><table style="width:100%;margin-top:22px;border-collapse:collapse;color:#382847"><tr><th style="text-align:left">Localidad</th><th style="text-align:left">Asiento</th><th style="text-align:right">Precio</th></tr>{rows}</table><p style="font-size:20px;text-align:right;color:#2c193b"><b>Total: {currency(r.total)}</b></p><p style="color:#706181;font-size:13px">Adjuntos: comprobante general y {len(r.tickets)} entradas electrónicas con QR. Cada QR es único y de un solo uso. No lo compartas.</p><p style="font-size:12px;color:#706181">Compra simulada para fines académicos; no se ha procesado un cobro real.</p></td></tr><tr><td style="text-align:center;padding:20px;background:#f5eff9;color:#8b7b98;font-size:12px">CONCIERTA · Tu música, tu lugar</td></tr></table></body></html>""",
+        f"""<html><body style="background:#f2ecf7;margin:0;padding:35px;font-family:Arial,sans-serif"><table role="presentation" style="max-width:630px;margin:auto;background:white;border-radius:16px;overflow:hidden"><tr><td style="background:#221333;color:white;padding:34px;font-size:28px;font-weight:bold">CONCIERTA <span style="color:#fa80c5">●</span></td></tr><tr><td style="padding:36px"><p style="font-size:12px;color:#9636ae;font-weight:bold">RESERVA CONFIRMADA</p><h1 style="font-size:27px;color:#281839">¡Nos vemos en el concierto!</h1><p style="color:#655874">Hola {escape(name)}, tus {len(r.tickets)} entradas están confirmadas. En este correo encontrarás tus documentos PDF y un código QR individual para cada acceso.</p><div style="padding:18px;background:#f5eff9;border-radius:9px;color:#362346"><b>{escape(event.get('name','Concierto'))}</b><br>{escape(event.get('artist',''))}<br>{escape(event_date(event.get('date','')))}<br>Reserva: {escape(r.code)}</div><table style="width:100%;margin-top:22px;border-collapse:collapse;color:#382847"><tr><th style="text-align:left">Localidad</th><th style="text-align:left">Asiento</th><th style="text-align:right">Precio</th></tr>{rows}</table><p style="font-size:20px;text-align:right;color:#2c193b"><b>Total: {currency(r.total)}</b></p><p style="color:#706181;font-size:13px">Adjuntos: comprobante general y {len(r.tickets)} entradas electrónicas con QR. Cada QR es único y de un solo uso. No lo compartas.</p></td></tr><tr><td style="text-align:center;padding:20px;background:#f5eff9;color:#8b7b98;font-size:12px">CONCIERTA · Tu música, tu lugar</td></tr></table></body></html>""",
         subtype="html",
     )
     msg.add_attachment(

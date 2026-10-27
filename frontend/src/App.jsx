@@ -431,7 +431,7 @@ function App() {
                     <div className="logo"><span className="mark">◉</span> CONCIERTA<span className="pink">.</span></div>
                     <p>Donde comienza la experiencia.</p>
                 </div>
-                <small>© 2026 CONCIERTA · Proyecto académico · Pagos simulados</small>
+                <small>© 2026 CONCIERTA</small>
             </div>
         </footer>
     </>;

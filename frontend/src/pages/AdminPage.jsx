@@ -18,7 +18,7 @@ export default function AdminPage({ ctx }) {
             </div>
             {tab === 'overview' && <>
                 <div className="metric-grid">
-                    {[['Reservas', report?.reservation_count], ['Confirmadas', report?.confirmed_count], ['Ingresos simulados', money(report?.total_revenue)], ['Eventos', events.length]].map(([name, v]) => <div className="panel metric" key={name}>
+                    {[['Reservas', report?.reservation_count], ['Confirmadas', report?.confirmed_count], ['Ingresos', money(report?.total_revenue)], ['Eventos', events.length]].map(([name, v]) => <div className="panel metric" key={name}>
                         <small>
                             {name}
                         </small>
@@ -90,7 +90,7 @@ export default function AdminPage({ ctx }) {
                                     <th>Ocupadas</th>
                                     <th>Disponibles según reporte</th>
                                     <th>Ocupación</th>
-                                    <th>Recaudación simulada</th>
+                                    <th>Recaudación</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -127,7 +127,7 @@ export default function AdminPage({ ctx }) {
                                     <th>Ocupadas</th>
                                     <th>Disponibles según reporte</th>
                                     <th>Ocupación</th>
-                                    <th>Recaudación simulada</th>
+                                    <th>Recaudación</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -353,7 +353,7 @@ export default function AdminPage({ ctx }) {
                         <p><strong>Cliente:</strong> {customer ? `${customer.first_name} ${customer.last_name} (${customer.username})` : r.client_id}</p>
                         <p><strong>Concierto:</strong> {event?.name || r.event_id}</p>
                         <p><strong>Estado:</strong> {r.status} · <strong>Creada:</strong> {displayDate(r.created_at)}</p>
-                        <p><strong>Total simulado:</strong> {money(r.total)} · <strong>Envío de correo:</strong> {r.email_status || 'Sin información'}</p>
+                        <p><strong>Total:</strong> {money(r.total)} · <strong>Envío de correo:</strong> {r.email_status || 'Sin información'}</p>
                         <div className="tablewrap">
                             <table>
                                 <thead><tr>
@@ -482,7 +482,6 @@ export default function AdminPage({ ctx }) {
                                     </tbody>
                                 </table>
                             </div>
-                            <p className="footnote">Estos datos personales solo se muestran en el panel del administrador.</p>
                             <h3>Historial individual de reservas</h3>
                             {(() => {
                                 const history = allReservations.filter(r => r.client_id === selectedUser.id);
@@ -727,7 +726,7 @@ export default function AdminPage({ ctx }) {
                 {venue?.Sections?.map(s => <p key={s.id}><strong>
                     {s.name}
                 </strong> — {s.capacity} localidades · {s.rows || 'Sin filas'} filas · {money(Number(s.price))}</p>)}
-                <p className="footnote">Datos de solo lectura, cargados desde la semilla.</p>
+                <p className="footnote">Datos de solo lecturas.</p>
             </div>}
         </main>}
     </>;

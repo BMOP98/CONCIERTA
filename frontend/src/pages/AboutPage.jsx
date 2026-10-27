@@ -12,7 +12,6 @@ export default function AboutPage({ ctx }) {
       <div className="eyebrow">SOBRE CONCIERTA</div>
       <h1>Vívelo en primera fila.</h1>
       <p>CONCIERTA es una plataforma de gestión de conciertos para un escenario único. Integra selección de localidades, reservas temporales, tickets electrónicos y un sistema administrativo para la promotora.</p>
-      <p>Proyecto académico: los pagos se simulan y ningún cobro se procesa.</p>
     </main>}
   </>;
 }
